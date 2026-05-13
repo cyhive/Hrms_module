@@ -1,3 +1,4 @@
+import type { MongoClientOptions } from "mongodb";
 import { MongoClient } from "mongodb";
 
 declare global {
@@ -41,11 +42,24 @@ function ensureAtlasDefaults(uri: string): string {
 
 const dbName = (process.env.MONGODB_DB_NAME ?? "hr_management_system").trim();
 
+function mongoClientOptions(): MongoClientOptions {
+  // Node's dual-stack resolution can prefer a broken IPv6 route; the TLS handshake
+  // to Atlas then fails with OpenSSL "SSL alert number 80" / tlsv1 internal error.
+  // Prefer IPv4 on Windows where this is commonly reported (Node 18+).
+  if (process.platform === "win32") {
+    return { autoSelectFamily: false, family: 4 };
+  }
+  return {};
+}
+
 export async function getDb() {
   const uri = resolveMongoUri();
 
   if (!global.__mongo || global.__mongo.uri !== uri) {
-    global.__mongo = { uri, promise: new MongoClient(uri).connect() };
+    global.__mongo = {
+      uri,
+      promise: new MongoClient(uri, mongoClientOptions()).connect(),
+    };
   }
 
   const entry = global.__mongo;

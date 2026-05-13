@@ -8,6 +8,7 @@ import { EmployeePayslipPanel } from "./employee-payslip-panel";
 import { LogoutButton } from "./logout-button";
 import { EmployeeDocument, EmployeeDocumentType, EmployeeProfile } from "@/lib/types";
 import { EmployeeProfileModal, type EmployeeRow } from "./employee-profile-modal";
+import { ResponsiveDashboardShell } from "./responsive-dashboard-shell";
 
 /** Calendar YYYY-MM-DD from a local Date (never use toISOString() for calendar keys). */
 function localIsoFromDate(d: Date): string {
@@ -2416,10 +2417,13 @@ function EmployeeDashboardShell({
   }
 
   return (
-    <main className="dashboard-shell mx-auto flex h-screen max-h-screen w-full max-w-[1600px] flex-col overflow-hidden bg-[#f2f4f8] text-zinc-900">
-      <div className="h-1 w-full shrink-0 bg-gradient-to-r from-teal-400 via-cyan-400 to-blue-500" />
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <aside className="flex w-full max-w-[250px] shrink-0 flex-col overflow-y-auto border-r border-zinc-200 bg-white">
+    <ResponsiveDashboardShell
+      navResetKey={activeTab}
+      topStripe={
+        <div className="h-1 w-full shrink-0 bg-gradient-to-r from-teal-400 via-cyan-400 to-blue-500" />
+      }
+      sidebar={
+        <>
           <div className="border-b border-zinc-200 px-4 py-3">
             <p className="text-xl font-bold tracking-wide text-zinc-800">LUCID</p>
           </div>
@@ -2433,7 +2437,7 @@ function EmployeeDashboardShell({
               Menu
             </p>
           </div>
-          <nav className="space-y-1 px-2 pb-4">
+          <nav className="space-y-1 px-2 pb-6">
             {employeeNavItems.map((item) => {
               if (item.key === "team-approvals" && user.role !== "manager") return null;
               const isActive = activeTab === item.key;
@@ -2456,37 +2460,34 @@ function EmployeeDashboardShell({
               );
             })}
           </nav>
-        </aside>
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <header className="flex shrink-0 items-center justify-between border-b border-zinc-200 bg-white px-4 py-3 shadow-sm">
-            <div className="flex items-center gap-3">
-              <h1 className="text-[22px] font-semibold tracking-tight text-zinc-900">
-                Employee Dashboard
-              </h1>
-              <p className="hidden text-xs text-zinc-600 md:block">
-                /{" "}
-                {employeeNavItems.find((i) => i.key === activeTab)?.label ?? activeTab}
-              </p>
-            </div>
-            <div className="flex items-center gap-3">
-              <input
-                placeholder="Search here..."
-                className="hidden w-72 rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-500 md:block"
-              />
-              <LogoutButton />
-            </div>
-          </header>
-          {user.mustChangePassword ? (
-            <p className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
-              You are using a temporary password. Please change it now.
-            </p>
-          ) : null}
-          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-[#f2f4f8] p-4">
-            {renderContent()}
-          </div>
-        </section>
-      </div>
-    </main>
+        </>
+      }
+      headerTitle="Employee Dashboard"
+      headerBreadcrumb={
+        <p className="text-xs text-zinc-600">
+          / {employeeNavItems.find((i) => i.key === activeTab)?.label ?? activeTab}
+        </p>
+      }
+      headerRight={
+        <>
+          <input
+            placeholder="Search here..."
+            className="hidden w-72 rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-500 md:block"
+            aria-label="Search"
+          />
+          <LogoutButton />
+        </>
+      }
+      banner={
+        user.mustChangePassword ? (
+          <p className="shrink-0 border-b border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 sm:px-4">
+            You are using a temporary password. Please change it now.
+          </p>
+        ) : null
+      }
+    >
+      {renderContent()}
+    </ResponsiveDashboardShell>
   );
 }
 
@@ -2498,7 +2499,7 @@ export function EmployeeDashboard(props: {
   return (
     <Suspense
       fallback={
-        <main className="dashboard-shell mx-auto flex min-h-screen w-full max-w-[1600px] items-center justify-center bg-[#f2f4f8] text-zinc-900">
+        <main className="dashboard-shell mx-auto flex min-h-[100dvh] w-full max-w-[1600px] items-center justify-center bg-[#f2f4f8] text-zinc-900">
           <p className="text-sm text-zinc-600">Loading dashboard…</p>
         </main>
       }

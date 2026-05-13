@@ -44,9 +44,12 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="animate-fade-in w-full max-w-md space-y-3 rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
-      <h1 className="text-2xl font-bold text-zinc-900">Sign in to HR Portal</h1>
-      <p className="text-sm text-zinc-700">
+    <form
+      onSubmit={handleSubmit}
+      className="animate-fade-in w-full max-w-md space-y-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm sm:p-6"
+    >
+      <h1 className="text-xl font-bold text-zinc-900 sm:text-2xl">Sign in to HR Portal</h1>
+      <p className="text-xs text-zinc-700 sm:text-sm">
         Default admin credentials:{" "}
         <span className="font-semibold">
           {SEED_ADMIN_USERNAME} / {SEED_ADMIN_PASSWORD}

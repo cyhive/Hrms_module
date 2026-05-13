@@ -16,6 +16,7 @@ import { AdminEventsPanel } from "./admin-events-panel";
 import { AdminProjectsPanel } from "./admin-projects-panel";
 import { AdminSalaryPanel } from "./admin-salary-panel";
 import { SalaryTrendChart } from "./salary-trend-chart";
+import { ResponsiveDashboardShell } from "./responsive-dashboard-shell";
 
 const navItems = [
   { key: "dashboard", label: "HR Dashboard" },
@@ -1586,10 +1587,13 @@ function AdminDashboardShell({ user }: { user: SafeUser }) {
   }
 
   return (
-    <main className="dashboard-shell mx-auto flex h-screen max-h-screen w-full max-w-[1600px] flex-col overflow-hidden bg-[#f2f4f8] text-zinc-900">
-      <div className="h-1 w-full shrink-0 bg-gradient-to-r from-teal-400 via-cyan-400 to-blue-500" />
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <aside className="flex w-full max-w-[250px] shrink-0 flex-col overflow-y-auto border-r border-zinc-200 bg-white">
+    <ResponsiveDashboardShell
+      navResetKey={activeTab}
+      topStripe={
+        <div className="h-1 w-full shrink-0 bg-gradient-to-r from-teal-400 via-cyan-400 to-blue-500" />
+      }
+      sidebar={
+        <>
           <div className="border-b border-zinc-200 px-4 py-3">
             <p className="text-xl font-bold tracking-wide text-zinc-800">LUCID</p>
           </div>
@@ -1677,7 +1681,7 @@ function AdminDashboardShell({ user }: { user: SafeUser }) {
               HR
             </p>
           </div>
-          <nav className="space-y-1 px-2 pb-4">
+          <nav className="space-y-1 px-2 pb-6">
             {navItems.map((item) => {
               const isActive = activeTab === item.key;
               return (
@@ -1697,39 +1701,37 @@ function AdminDashboardShell({ user }: { user: SafeUser }) {
               );
             })}
           </nav>
-        </aside>
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <header className="flex shrink-0 items-center justify-between border-b border-zinc-200 bg-white px-4 py-3 shadow-sm">
-            <div className="flex items-center gap-3">
-              <h1 className="text-[22px] font-semibold tracking-tight text-zinc-900">
-                {user.role === "hr" ? "HR Dashboard" : "Admin Dashboard"}
-              </h1>
-              <p className="hidden text-xs text-zinc-600 md:block">
-                / {navItems.find((i) => i.key === activeTab)?.label ?? activeTab}
-              </p>
+        </>
+      }
+      headerTitle={user.role === "hr" ? "HR Dashboard" : "Admin Dashboard"}
+      headerBreadcrumb={
+        <p className="text-xs text-zinc-600">
+          / {navItems.find((i) => i.key === activeTab)?.label ?? activeTab}
+        </p>
+      }
+      headerRight={
+        <>
+          <input
+            placeholder="Search here..."
+            className="hidden w-72 rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-500 md:block"
+            aria-label="Search"
+          />
+          <LogoutButton />
+        </>
+      }
+      banner={
+        user.mustChangePassword ? (
+          <section className="shrink-0 border-b border-amber-200 bg-amber-50 px-3 py-3 sm:px-4">
+            <p className="text-sm font-medium text-amber-900">Set a new password to continue.</p>
+            <div className="mt-3 max-w-md">
+              <EmployeePasswordForm />
             </div>
-            <div className="flex items-center gap-3">
-              <input
-                placeholder="Search here..."
-                className="hidden w-72 rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-500 md:block"
-              />
-              <LogoutButton />
-            </div>
-          </header>
-          {user.mustChangePassword ? (
-            <section className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-3">
-              <p className="text-sm font-medium text-amber-900">Set a new password to continue.</p>
-              <div className="mt-3 max-w-md">
-                <EmployeePasswordForm />
-              </div>
-            </section>
-          ) : null}
-          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-[#f2f4f8] p-4">
-            <section className="rounded border border-zinc-200 bg-white p-4">{renderContent()}</section>
-          </div>
-        </section>
-      </div>
-    </main>
+          </section>
+        ) : null
+      }
+    >
+      <section className="rounded border border-zinc-200 bg-white p-3 sm:p-4">{renderContent()}</section>
+    </ResponsiveDashboardShell>
   );
 }
 
@@ -1737,7 +1739,7 @@ export function AdminDashboard({ user }: { user: SafeUser }) {
   return (
     <Suspense
       fallback={
-        <main className="dashboard-shell mx-auto flex min-h-screen w-full max-w-[1600px] items-center justify-center bg-[#f2f4f8] text-zinc-900">
+        <main className="dashboard-shell mx-auto flex min-h-[100dvh] w-full max-w-[1600px] items-center justify-center bg-[#f2f4f8] text-zinc-900">
           <p className="text-sm text-zinc-600">Loading dashboard…</p>
         </main>
       }
