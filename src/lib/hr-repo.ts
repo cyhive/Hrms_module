@@ -1165,51 +1165,191 @@ export async function decideMissPunchRequest(input: {
   const finalPatch = { status, hrApprovalBy: input.actor.id, hrApprovalAt: nowIso };
   await col.updateOne({ _id: input.requestId }, { $set: finalPatch });
   if (status === "approved") {
-    const attendance = await attendanceCollection();
-    const existing = await attendance.findOne({ userId: doc.userId, date: doc.date });
-    const day = parseLocalIsoDateOnly(doc.date);
-    const defaultIn = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 0, 0).toISOString();
-    const defaultOut = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 18, 0, 0).toISOString();
-
-    if (!existing) {
-      // Regularize absent/missing record by creating a standard working-day entry.
-      await attendance.insertOne({
-        _id: randomUUID(),
-        userId: doc.userId,
-        date: doc.date,
-        punchIn: defaultIn,
-        punchOut: defaultOut,
-        workedHours: 9,
-        status: "present",
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      });
-      return { ...doc, ...finalPatch };
-    }
-
-    const patch: Partial<AttendanceRecord> = { updatedAt: nowIso, status: "present" };
-    if (doc.type === "punch-in" && !existing.punchIn) {
-      patch.punchIn = existing.punchOut
-        ? new Date(new Date(existing.punchOut).getTime() - 9 * 60 * 60 * 1000).toISOString()
-        : defaultIn;
-    }
-    if (doc.type === "punch-out" && !existing.punchOut) {
-      patch.punchOut = existing.punchIn
-        ? new Date(new Date(existing.punchIn).getTime() + 9 * 60 * 60 * 1000).toISOString()
-        : defaultOut;
-    }
-
-    const finalIn = patch.punchIn ?? existing.punchIn ?? defaultIn;
-    const finalOut = patch.punchOut ?? existing.punchOut ?? defaultOut;
-    const diffMs = Math.max(0, new Date(finalOut).getTime() - new Date(finalIn).getTime());
-    patch.workedHours = Number((diffMs / (1000 * 60 * 60)).toFixed(2));
-
-    await attendance.updateOne({ _id: existing._id }, { $set: patch });
+    await regularizeAttendanceForMissPunch(doc.userId, doc.date, doc.type, nowIso);
   }
   return { ...doc, ...finalPatch };
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function assertHrActor(role: Role) {
+  if (role !== "admin" && role !== "hr") throw new Error("Forbidden");
+}
+
+async function regularizeAttendanceForMissPunch(
+  userId: string,
+  date: string,
+  type: "punch-in" | "punch-out",
+  nowIso = new Date().toISOString(),
+) {
+  const attendance = await attendanceCollection();
+  const existing = await attendance.findOne({ userId, date });
+  const day = parseLocalIsoDateOnly(date);
+  const defaultIn = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 0, 0).toISOString();
+  const defaultOut = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 18, 0, 0).toISOString();
+
+  if (!existing) {
+    await attendance.insertOne({
+      _id: randomUUID(),
+      userId,
+      date,
+      punchIn: defaultIn,
+      punchOut: defaultOut,
+      workedHours: 9,
+      status: "present",
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    });
+    return;
+  }
+
+  const patch: Partial<AttendanceRecord> = { updatedAt: nowIso, status: "present" };
+  if (type === "punch-in" && !existing.punchIn) {
+    patch.punchIn = existing.punchOut
+      ? new Date(new Date(existing.punchOut).getTime() - 9 * 60 * 60 * 1000).toISOString()
+      : defaultIn;
+  }
+  if (type === "punch-out" && !existing.punchOut) {
+    patch.punchOut = existing.punchIn
+      ? new Date(new Date(existing.punchIn).getTime() + 9 * 60 * 60 * 1000).toISOString()
+      : defaultOut;
+  }
+
+  const finalIn = patch.punchIn ?? existing.punchIn ?? defaultIn;
+  const finalOut = patch.punchOut ?? existing.punchOut ?? defaultOut;
+  const diffMs = Math.max(0, new Date(finalOut).getTime() - new Date(finalIn).getTime());
+  patch.workedHours = Number((diffMs / (1000 * 60 * 60)).toFixed(2));
+
+  await attendance.updateOne({ _id: existing._id }, { $set: patch });
+}
+
+export async function hrUpdateApprovedLeaveRequest(input: {
+  requestId: string;
+  fromDate: string;
+  toDate: string;
+  reason: string;
+  actor: { id: string; role: Role };
+}): Promise<LeaveRequest> {
+  assertHrActor(input.actor.role);
+  if (!ISO_DATE.test(input.fromDate) || !ISO_DATE.test(input.toDate)) {
+    throw new Error("Dates must be YYYY-MM-DD");
+  }
+  const reason = input.reason.trim();
+  if (!reason) throw new Error("Reason is required");
+
+  const requests = await leaveRequestCollection();
+  const existing = await requests.findOne({ _id: input.requestId });
+  if (!existing) throw new Error("Leave request not found");
+  if (existing.status !== "approved") throw new Error("Only approved leave requests can be edited by HR");
+
+  const days = await calculateLeaveDays(input.fromDate, input.toDate);
+  if (days <= 0) throw new Error("Selected dates contain only off days");
+
+  const balance = await syncLeaveBalanceFromJoining(existing.userId);
+  const allowed = balance.annualLeave + (existing.compensation === "paid" ? existing.days : 0);
+  const compensation: LeaveRequest["compensation"] = days > allowed ? "unpaid" : "paid";
+
+  await requests.updateOne(
+    { _id: existing._id },
+    {
+      $set: {
+        fromDate: input.fromDate,
+        toDate: input.toDate,
+        days,
+        reason,
+        compensation,
+        hrUpdatedBy: input.actor.id,
+        hrUpdatedAt: new Date().toISOString(),
+      },
+    },
+  );
+  await syncLeaveBalanceFromJoining(existing.userId);
+  const updated = await requests.findOne({ _id: existing._id });
+  if (!updated) throw new Error("Leave request not found after update");
+  return updated;
+}
+
+export async function hrUpdateApprovedWfhRequest(input: {
+  requestId: string;
+  fromDate: string;
+  toDate: string;
+  reason: string;
+  actor: { id: string; role: Role };
+}): Promise<WfhRequest> {
+  assertHrActor(input.actor.role);
+  if (!ISO_DATE.test(input.fromDate) || !ISO_DATE.test(input.toDate)) {
+    throw new Error("Dates must be YYYY-MM-DD");
+  }
+  const reason = input.reason.trim();
+  if (!reason) throw new Error("Reason is required");
+
+  const requests = await wfhRequestCollection();
+  const existing = await requests.findOne({ _id: input.requestId });
+  if (!existing) throw new Error("WFH request not found");
+  if (existing.status !== "approved") throw new Error("Only approved WFH requests can be edited by HR");
+
+  const days = await calculateLeaveDays(input.fromDate, input.toDate);
+  if (days <= 0) throw new Error("Selected dates contain only off days");
+
+  await requests.updateOne(
+    { _id: existing._id },
+    {
+      $set: {
+        fromDate: input.fromDate,
+        toDate: input.toDate,
+        days,
+        reason,
+        hrUpdatedBy: input.actor.id,
+        hrUpdatedAt: new Date().toISOString(),
+      },
+    },
+  );
+  const updated = await requests.findOne({ _id: existing._id });
+  if (!updated) throw new Error("WFH request not found after update");
+  return updated;
+}
+
+export async function hrUpdateApprovedMissPunchRequest(input: {
+  requestId: string;
+  date: string;
+  type: "punch-in" | "punch-out";
+  reason: string;
+  actor: { id: string; role: Role };
+}): Promise<MissPunchRequest> {
+  assertHrActor(input.actor.role);
+  if (!ISO_DATE.test(input.date)) throw new Error("Date must be YYYY-MM-DD");
+  const reason = input.reason.trim();
+  if (!reason) throw new Error("Reason is required");
+
+  const requests = await missPunchCollection();
+  const existing = await requests.findOne({ _id: input.requestId });
+  if (!existing) throw new Error("Miss punch request not found");
+  if (existing.status !== "approved") throw new Error("Only approved miss punch requests can be edited by HR");
+
+  const nowIso = new Date().toISOString();
+  const attendanceChanged = existing.date !== input.date || existing.type !== input.type;
+
+  await requests.updateOne(
+    { _id: existing._id },
+    {
+      $set: {
+        date: input.date,
+        type: input.type,
+        reason,
+        hrUpdatedBy: input.actor.id,
+        hrUpdatedAt: nowIso,
+      },
+    },
+  );
+
+  if (attendanceChanged) {
+    await regularizeAttendanceForMissPunch(existing.userId, input.date, input.type, nowIso);
+  }
+
+  const updated = await requests.findOne({ _id: existing._id });
+  if (!updated) throw new Error("Miss punch request not found after update");
+  return updated;
+}
 
 export async function listMyAssignedAssets(userId: string): Promise<
   Array<{

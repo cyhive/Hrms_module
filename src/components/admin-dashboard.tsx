@@ -65,6 +65,29 @@ const navIcons: Record<AdminTab, string> = {
 
 type RequestKind = "leave" | "wfh" | "miss-punch";
 
+type RequestEditState =
+  | {
+      kind: "leave";
+      id: string;
+      fromDate: string;
+      toDate: string;
+      reason: string;
+    }
+  | {
+      kind: "wfh";
+      id: string;
+      fromDate: string;
+      toDate: string;
+      reason: string;
+    }
+  | {
+      kind: "miss-punch";
+      id: string;
+      date: string;
+      type: "punch-in" | "punch-out";
+      reason: string;
+    };
+
 function payrollPeriodLabel(period: string | null): string {
   if (!period) return "";
   const m = /^(\d{4})-(\d{2})$/.exec(period.trim());
@@ -124,6 +147,8 @@ function AdminDashboardShell({ user }: { user: SafeUser }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [requestDecisionError, setRequestDecisionError] = useState<string | null>(null);
   const [actingRequest, setActingRequest] = useState<{ kind: RequestKind; id: string } | null>(null);
+  const [requestEdit, setRequestEdit] = useState<RequestEditState | null>(null);
+  const [requestEditBusy, setRequestEditBusy] = useState(false);
   const [overview, setOverview] = useState<{
     employees: Array<{
       id: string;
@@ -416,7 +441,50 @@ function AdminDashboardShell({ user }: { user: SafeUser }) {
 
   useEffect(() => {
     setRequestDecisionError(null);
+    setRequestEdit(null);
   }, [activeTab]);
+
+  const submitRequestEdit = useCallback(async () => {
+    if (!requestEdit) return;
+    setRequestDecisionError(null);
+    setRequestEditBusy(true);
+    const url =
+      requestEdit.kind === "leave"
+        ? "/api/admin/leave-request"
+        : requestEdit.kind === "wfh"
+          ? "/api/admin/wfh-request"
+          : "/api/admin/miss-punch-request";
+    const body =
+      requestEdit.kind === "miss-punch"
+        ? {
+            requestId: requestEdit.id,
+            date: requestEdit.date,
+            type: requestEdit.type,
+            reason: requestEdit.reason,
+          }
+        : {
+            requestId: requestEdit.id,
+            fromDate: requestEdit.fromDate,
+            toDate: requestEdit.toDate,
+            reason: requestEdit.reason,
+          };
+    try {
+      const res = await fetch(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setRequestDecisionError(typeof data.error === "string" ? data.error : "Update failed");
+        return;
+      }
+      setRequestEdit(null);
+      setRefreshKey((k) => k + 1);
+    } finally {
+      setRequestEditBusy(false);
+    }
+  }, [requestEdit]);
 
   const submitRequestDecision = useCallback(
     async (kind: RequestKind, requestId: string, decision: "approve" | "reject") => {
@@ -1142,20 +1210,59 @@ function AdminDashboardShell({ user }: { user: SafeUser }) {
               <tbody>
                 {rows.map((row) => {
                   const pending = row.status === "pending";
+                  const approved = row.status === "approved";
+                  const editing = requestEdit?.kind === "leave" && requestEdit.id === row._id;
                   const busy =
                     actingRequest?.kind === "leave" && actingRequest.id === row._id;
                   return (
                     <tr key={row._id} className="border-b border-zinc-100">
                       <td className="py-2 text-zinc-800">{getEmployeeDisplayName(row.userId)}</td>
-                      <td className="py-2 text-zinc-800">{row.fromDate}</td>
-                      <td className="py-2 text-zinc-800">{row.toDate}</td>
+                      <td className="py-2 text-zinc-800">
+                        {editing ? (
+                          <input
+                            type="date"
+                            value={requestEdit.fromDate}
+                            onChange={(e) =>
+                              setRequestEdit({ ...requestEdit, fromDate: e.target.value })
+                            }
+                            className="rounded border border-zinc-300 px-2 py-1 text-xs"
+                          />
+                        ) : (
+                          row.fromDate
+                        )}
+                      </td>
+                      <td className="py-2 text-zinc-800">
+                        {editing ? (
+                          <input
+                            type="date"
+                            value={requestEdit.toDate}
+                            onChange={(e) =>
+                              setRequestEdit({ ...requestEdit, toDate: e.target.value })
+                            }
+                            className="rounded border border-zinc-300 px-2 py-1 text-xs"
+                          />
+                        ) : (
+                          row.toDate
+                        )}
+                      </td>
                       <td className="py-2 text-zinc-800">{row.days}</td>
                       <td className="py-2 capitalize text-zinc-800">
                         {row.compensation === "unpaid" ? "Unpaid" : "Paid"}
                       </td>
                       <td className="py-2 capitalize text-zinc-800">{row.status}</td>
                       <td className="max-w-[200px] truncate py-2 text-zinc-700" title={row.reason}>
-                        {row.reason ?? "—"}
+                        {editing ? (
+                          <input
+                            type="text"
+                            value={requestEdit.reason}
+                            onChange={(e) =>
+                              setRequestEdit({ ...requestEdit, reason: e.target.value })
+                            }
+                            className="w-full min-w-[160px] rounded border border-zinc-300 px-2 py-1 text-xs"
+                          />
+                        ) : (
+                          row.reason ?? "—"
+                        )}
                       </td>
                       <td className="py-2">
                         {pending ? (
@@ -1177,6 +1284,43 @@ function AdminDashboardShell({ user }: { user: SafeUser }) {
                               Reject
                             </button>
                           </div>
+                        ) : approved ? (
+                          editing ? (
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                disabled={requestEditBusy}
+                                onClick={() => void submitRequestEdit()}
+                                className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+                              >
+                                {requestEditBusy ? "…" : "Save"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={requestEditBusy}
+                                onClick={() => setRequestEdit(null)}
+                                className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setRequestEdit({
+                                  kind: "leave",
+                                  id: row._id,
+                                  fromDate: row.fromDate,
+                                  toDate: row.toDate,
+                                  reason: row.reason ?? "",
+                                })
+                              }
+                              className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50"
+                            >
+                              Edit
+                            </button>
+                          )
                         ) : (
                           <span className="text-zinc-400">—</span>
                         )}
@@ -1208,6 +1352,11 @@ function AdminDashboardShell({ user }: { user: SafeUser }) {
           <p className="mt-1 text-sm text-zinc-600">
             Employee miss punch submissions (including early punch-out notes) load from the server.
           </p>
+          {requestDecisionError ? (
+            <p className="mt-3 text-sm text-red-700" role="alert">
+              {requestDecisionError}
+            </p>
+          ) : null}
           <div className="mt-4 overflow-x-auto">
             <table className="w-full min-w-[980px] text-left text-sm">
               <thead className="border-b border-zinc-200 text-zinc-700">
@@ -1224,19 +1373,65 @@ function AdminDashboardShell({ user }: { user: SafeUser }) {
               <tbody>
                 {missRows.map((row) => {
                   const pending = row.status === "pending";
+                  const approved = row.status === "approved";
+                  const editing = requestEdit?.kind === "miss-punch" && requestEdit.id === row._id;
                   const busy =
                     actingRequest?.kind === "miss-punch" && actingRequest.id === row._id;
+                  const punchType: "punch-in" | "punch-out" =
+                    row.type === "punch-out" ? "punch-out" : "punch-in";
                   return (
                     <tr key={row._id} className="border-b border-zinc-100">
                       <td className="py-2 text-zinc-700">{formatIsoUtc(row.createdAt)}</td>
                       <td className="py-2 text-zinc-800">{getEmployeeDisplayName(row.userId)}</td>
-                      <td className="py-2 text-zinc-800">{row.date}</td>
                       <td className="py-2 text-zinc-800">
-                        {row.type === "punch-out" ? "Punch out" : "Punch in"}
+                        {editing ? (
+                          <input
+                            type="date"
+                            value={requestEdit.date}
+                            onChange={(e) =>
+                              setRequestEdit({ ...requestEdit, date: e.target.value })
+                            }
+                            className="rounded border border-zinc-300 px-2 py-1 text-xs"
+                          />
+                        ) : (
+                          row.date
+                        )}
+                      </td>
+                      <td className="py-2 text-zinc-800">
+                        {editing ? (
+                          <select
+                            value={requestEdit.type}
+                            onChange={(e) =>
+                              setRequestEdit({
+                                ...requestEdit,
+                                type: e.target.value as "punch-in" | "punch-out",
+                              })
+                            }
+                            className="rounded border border-zinc-300 px-2 py-1 text-xs"
+                          >
+                            <option value="punch-in">Punch in</option>
+                            <option value="punch-out">Punch out</option>
+                          </select>
+                        ) : row.type === "punch-out" ? (
+                          "Punch out"
+                        ) : (
+                          "Punch in"
+                        )}
                       </td>
                       <td className="py-2 capitalize text-zinc-800">{row.status}</td>
                       <td className="max-w-[220px] truncate py-2 text-zinc-700" title={row.reason}>
-                        {row.reason ?? "—"}
+                        {editing ? (
+                          <input
+                            type="text"
+                            value={requestEdit.reason}
+                            onChange={(e) =>
+                              setRequestEdit({ ...requestEdit, reason: e.target.value })
+                            }
+                            className="w-full min-w-[160px] rounded border border-zinc-300 px-2 py-1 text-xs"
+                          />
+                        ) : (
+                          row.reason ?? "—"
+                        )}
                       </td>
                       <td className="py-2">
                         {pending ? (
@@ -1262,6 +1457,43 @@ function AdminDashboardShell({ user }: { user: SafeUser }) {
                               Reject
                             </button>
                           </div>
+                        ) : approved ? (
+                          editing ? (
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                disabled={requestEditBusy}
+                                onClick={() => void submitRequestEdit()}
+                                className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+                              >
+                                {requestEditBusy ? "…" : "Save"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={requestEditBusy}
+                                onClick={() => setRequestEdit(null)}
+                                className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setRequestEdit({
+                                  kind: "miss-punch",
+                                  id: row._id,
+                                  date: row.date,
+                                  type: punchType,
+                                  reason: row.reason ?? "",
+                                })
+                              }
+                              className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50"
+                            >
+                              Edit
+                            </button>
+                          )
                         ) : (
                           <span className="text-zinc-400">—</span>
                         )}
@@ -1309,16 +1541,55 @@ function AdminDashboardShell({ user }: { user: SafeUser }) {
               <tbody>
                 {rows.map((row) => {
                   const pending = row.status === "pending";
+                  const approved = row.status === "approved";
+                  const editing = requestEdit?.kind === "wfh" && requestEdit.id === row._id;
                   const busy = actingRequest?.kind === "wfh" && actingRequest.id === row._id;
                   return (
                     <tr key={row._id} className="border-b border-zinc-100">
                       <td className="py-2 text-zinc-800">{getEmployeeDisplayName(row.userId)}</td>
-                      <td className="py-2 text-zinc-800">{row.fromDate}</td>
-                      <td className="py-2 text-zinc-800">{row.toDate}</td>
+                      <td className="py-2 text-zinc-800">
+                        {editing ? (
+                          <input
+                            type="date"
+                            value={requestEdit.fromDate}
+                            onChange={(e) =>
+                              setRequestEdit({ ...requestEdit, fromDate: e.target.value })
+                            }
+                            className="rounded border border-zinc-300 px-2 py-1 text-xs"
+                          />
+                        ) : (
+                          row.fromDate
+                        )}
+                      </td>
+                      <td className="py-2 text-zinc-800">
+                        {editing ? (
+                          <input
+                            type="date"
+                            value={requestEdit.toDate}
+                            onChange={(e) =>
+                              setRequestEdit({ ...requestEdit, toDate: e.target.value })
+                            }
+                            className="rounded border border-zinc-300 px-2 py-1 text-xs"
+                          />
+                        ) : (
+                          row.toDate
+                        )}
+                      </td>
                       <td className="py-2 text-zinc-800">{row.days}</td>
                       <td className="py-2 capitalize text-zinc-800">{row.status}</td>
                       <td className="max-w-[240px] truncate py-2 text-zinc-700" title={row.reason}>
-                        {row.reason ?? "—"}
+                        {editing ? (
+                          <input
+                            type="text"
+                            value={requestEdit.reason}
+                            onChange={(e) =>
+                              setRequestEdit({ ...requestEdit, reason: e.target.value })
+                            }
+                            className="w-full min-w-[160px] rounded border border-zinc-300 px-2 py-1 text-xs"
+                          />
+                        ) : (
+                          row.reason ?? "—"
+                        )}
                       </td>
                       <td className="py-2">
                         {pending ? (
@@ -1340,6 +1611,43 @@ function AdminDashboardShell({ user }: { user: SafeUser }) {
                               Reject
                             </button>
                           </div>
+                        ) : approved ? (
+                          editing ? (
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                disabled={requestEditBusy}
+                                onClick={() => void submitRequestEdit()}
+                                className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+                              >
+                                {requestEditBusy ? "…" : "Save"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={requestEditBusy}
+                                onClick={() => setRequestEdit(null)}
+                                className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setRequestEdit({
+                                  kind: "wfh",
+                                  id: row._id,
+                                  fromDate: row.fromDate,
+                                  toDate: row.toDate,
+                                  reason: row.reason ?? "",
+                                })
+                              }
+                              className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50"
+                            >
+                              Edit
+                            </button>
+                          )
                         ) : (
                           <span className="text-zinc-400">—</span>
                         )}
